@@ -7,6 +7,7 @@ class EntityState(object):
         self.p_pos = None
         # physical velocity
         self.p_vel = None
+        self.hold_action = 0
 
 # state of agents (including communication and internal/mental state)
 class AgentState(EntityState):
@@ -14,6 +15,7 @@ class AgentState(EntityState):
         super(AgentState, self).__init__()
         # communication allocation
         self.c = None
+        self.UAV_Rate = None
 
 # action of the agent
 class Action(object):
@@ -98,6 +100,7 @@ class World(object):
         # contact response parameters
         self.contact_force = 1e+2
         self.contact_margin = 1e-3
+        self.collaborative = False
 
         self.pow_UAVs = 100  # 无人机发射功率
         self.pow_GBS = None  # 地面基站发射功率
@@ -128,7 +131,7 @@ class World(object):
         return [agent for agent in self.agents if agent.action_callback is not None]
 
     # update state of the world
-    def step(self, episode_step):
+    def step(self):
         # set actions for scripted agents
         for agent in self.scripted_agents:
             agent.action = agent.action_callback(agent, self)
@@ -140,10 +143,10 @@ class World(object):
         p_force = self.apply_environment_force(p_force)
         # integrate physical state
         self.integrate_state(p_force)
-        self.update_landmark_pos(episode_step)
+        self.update_landmark_pos()
         # update agent state
-        # for agent in self.agents:
-        #     self.update_agent_state(agent)
+        for agent in self.agents:
+            self.update_agent_state(agent)
         self.update_world_state()
 
         # dict_state = []
@@ -195,10 +198,25 @@ class World(object):
                                                                   np.square(agent.state.p_vel[1])) * agent.max_speed
             agent.state.p_pos += agent.state.p_vel * self.dt
 
-    def update_landmark_pos(self,episode_step):
+    def update_landmark_pos(self):
+        # for landmark in self.landmarks:
+        #     if not landmark.movable: continue
+        #     if landmark.state.hold_action > 0:
+        #         landmark.state.hold_action -= 1
+        #         landmark.state.p_vel = np.random.uniform(-1, +1, self.dim_p) * 0.5
+        #     else:
+        #         landmark.state.hold_action = np.random.randint(0,10)
+        #
+        #     temp_pos = landmark.state.p_pos + landmark.state.p_vel * self.dt
+        #     while not (-1 <= temp_pos[0] <= 1 and -1 <= temp_pos[1] <= 1):
+        #         landmark.state.p_vel = np.random.uniform(-1, +1, self.dim_p) * 0.5
+        #         temp_pos = landmark.state.p_pos + landmark.state.p_vel * self.dt
+        #         # print(temp_pos)
+        #     landmark.state.p_pos = temp_pos
+
         for landmark in self.landmarks:
             if not landmark.movable: continue
-            landmark.state.p_vel = np.random.uniform(-1, +1, self.dim_p)*0.5
+            landmark.state.p_vel = np.random.uniform(-1, +1, self.dim_p) * 0.5
             temp_pos = landmark.state.p_pos + landmark.state.p_vel * self.dt
             while not (-1 <= temp_pos[0] <= 1 and -1 <= temp_pos[1] <= 1):
                 landmark.state.p_vel = np.random.uniform(-1, +1, self.dim_p) * 0.5
@@ -212,8 +230,9 @@ class World(object):
         if agent.silent:
             agent.state.c = np.zeros(self.dim_c)
         else:
-            noise = np.random.randn(*agent.action.c.shape) * agent.c_noise if agent.c_noise else 0.0
-            agent.state.c = agent.action.c + noise
+            # noise = np.random.randn(*agent.action.c.shape) * agent.c_noise if agent.c_noise else 0.0
+            # agent.state.c = agent.action.c + noise
+            agent.state.c = agent.action.c
 
     def update_world_state(self):
         # 根据基站提供的方案，用户进行选择
@@ -237,9 +256,16 @@ class World(object):
         SNR = signal_pow / noise_pow
         # 信息传输速率
 
+        # for i in range(self.dim_c):
+        #     for j in range(len(self.agents)):
+        #         if 10*np.log10(SNR[j][i]) < 15:
+        #             bw[j][i] = 0
+
         Rate = bw * np.log2(np.ones((len(self.agents), self.dim_c)) + SNR)
 
-        mask = np.zeros((len(self.agents), self.dim_c))
+        ## 保证每个用户只与一个无人机建立通信链路
+        mask = np.zeros((len(self.agents), self.dim_c)) #被遮掉的位置为0
+        # mask = -1 * np.ones((len(self.agents), self.dim_c)) #被遮掉的位置为负数
         for i in range(self.dim_c):
             mask[np.argmax(Rate[:, i])][i] = 1
 
@@ -247,9 +273,14 @@ class World(object):
         self.Rate = mask * Rate
         self.SNR = 10*np.log10(mask * SNR)
 
+        for i, agent in enumerate(self.agents):
+            agent.state.assign = self.bandwidth[i,:]/self.max_band
+            agent.state.UAV_Rate = self.Rate[i,:]
+
         for i, landmark in enumerate(self.landmarks):
             band = self.bandwidth.transpose()
             landmark.assign_index = np.nonzero(band[i])
+            # landmark.assign_index = np.nonzero(np.maximum(band[i], np.zeros((self.dim_c, len(self.agents)))))
 
     # get collision forces for any contact between two entities
     def get_collision_force(self, entity_a, entity_b):

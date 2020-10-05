@@ -7,14 +7,15 @@ class Scenario(BaseScenario):
         world = World()
         # set any world properties first
         world.dim_c = 5
+        num_uav = 2
         world.collaborative = True  # whether agents share rewards
         # add agents
-        world.agents = [Agent() for i in range(2)]
+        world.agents = [Agent() for i in range(num_uav)]
         for i, agent in enumerate(world.agents):
             agent.name = 'agent %d' % i
             agent.collide = True
         # add landmarks
-        world.landmarks = [Landmark() for i in range(5)]
+        world.landmarks = [Landmark() for i in range(world.dim_c)]
         for i, landmark in enumerate(world.landmarks):
             landmark.name = 'landmark %d' % i
             landmark.collide = False
@@ -40,16 +41,23 @@ class Scenario(BaseScenario):
         #     landmark.color = np.array([0.25, 0.25, 0.25])
             # set random initial states
         for i, agent in enumerate(world.agents):
-            agent.color = np.array([[0.35, 0.35, 0.85], [0.25, 0.75, 0.25]])[i]
+            agent.color = np.array([[0.35, 0.35, 0.85], [0.25, 0.75, 0.25], [0.5, 0.15, 0.35]])[i]
             # agent.state.p_pos = np.array([[0.35, 0.35], [-0.35, -0.35]])[i]
-            agent.state.p_pos = np.random.uniform(-1, +1, world.dim_p)
+            agent.state.p_pos = np.array([[0., 0.5], [-0.43, -0.25], [0.43, -0.25]])[i]
+            # agent.state.p_pos = np.random.uniform(-1, +1, world.dim_p)
             agent.state.p_vel = np.zeros(world.dim_p)
             agent.state.c = np.zeros(world.dim_c)
         for i, landmark in enumerate(world.landmarks):
-            landmark.state.p_pos = np.random.uniform(-1, +1, world.dim_p)
-            # landmark.state.p_pos = np.array([[-0.8154612, -0.24502182], [0.89699076, -0.14581629],
+            # landmark.state.p_pos = np.random.uniform(-1, +1, world.dim_p)
+            # landmark.state.p_pos = np.array([[-0.8154612  , -0.24502182], [0.89699076, -0.14581629],
             #                                  [-0.324932, 0.60295496], [0.62360916, -0.52245444],
-            #                                  [0.65862443,  0.23426809]])[i]
+            #                                  [0.65862443, 0.23426809]])[i]
+
+            landmark.state.p_pos = np.array([[-0.8154612, -0.24502182], [0.89699076, -0.14581629],
+                                             [-0.3249325, 0.60295496], [0.62360916, -0.52245444],
+                                             [0.65862443, 0.23426809], [0.29590076, 0.54571629],
+                                             [-0.89699076, -0.74682629], [0.84629571, -0.98582649],
+                                             [-0.89699076, 0.14581629], [-0.14699076, -0.75584629]])[i]
 
             landmark.state.p_vel = np.zeros(world.dim_p)
             # landmark.state.p_vel = np.random.uniform(-1, +1, world.dim_p)
@@ -80,15 +88,23 @@ class Scenario(BaseScenario):
         return True if dist < dist_min else False
 
     def reward(self, agent, world):
+        try:
+            reward = 10*np.log(np.min(world.Rate[np.nonzero(world.Rate)]))
+            # reward = np.log(np.min(agent.state.UAV_Rate[np.nonzero(agent.state.UAV_Rate)]))
+            # reward = np.log(np.sum(world.Rate))
+        except ValueError:
+            reward = 0
 
-        reward = np.log(np.min(world.Rate[np.nonzero(world.Rate)]))
+        # reward = np.log(np.sum(world.Rate))
+
         for i in range(world.dim_c):
             if np.max(world.SNR[:, i]) < 15:
                 reward -= 10
-                # print('SNR not saftistied')
+                #print('SNR not saftistied')
+
         for agent in world.agents:
             if not (-1 <= agent.state.p_pos[0] <= 1 and -1 <= agent.state.p_pos[1] <= 1):
-                reward -= 10
+                reward -= 100
                 # print(entity.name)
                 # print(entity.state.p_pos)
                 # raise Exception('超出边界')
