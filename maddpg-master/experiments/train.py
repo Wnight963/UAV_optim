@@ -1,3 +1,10 @@
+# --------------------------------------------------------
+#     程序：MADDPG解决多无人机位置部署优化与通信资源分配问题
+#     作者：王玮健
+#     日期：2019-9-1
+#     语言：Python 3.6
+# --------------------------------------------------------
+
 import argparse
 import numpy as np
 import tensorflow as tf
@@ -7,9 +14,6 @@ import maddpg.common.tf_util as U
 from maddpg.trainer.maddpg import MADDPGAgentTrainer
 import tensorflow.contrib.layers as layers
 import pandas as pd
-# import tensorflow.nn.rnn_cell as rnn
-# import tensorflow.layers as layers
-import tensorflow.keras.layers as layers1
 import matplotlib.pyplot as plt
 
 import os
@@ -23,7 +27,7 @@ def parse_args():
     # Environment simple_collaborative_comm simple_spread
     parser.add_argument("--scenario", type=str, default="simple_collaborative_comm", help="name of the scenario script")
     parser.add_argument("--max-episode-len", type=int, default=100, help="maximum episode length")
-    parser.add_argument("--num-episodes", type=int, default=150000, help="number of episodes")
+    parser.add_argument("--num-episodes", type=int, default=120000, help="number of episodes")
     parser.add_argument("--num-adversaries", type=int, default=0, help="number of adversaries")
     parser.add_argument("--good-policy", type=str, default="maddpg", help="policy for good agents")
     parser.add_argument("--adv-policy", type=str, default="maddpg", help="policy of adversaries")
@@ -33,16 +37,16 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=1024, help="number of episodes to optimize at the same time")
     parser.add_argument("--num-units", type=int, default=64, help="number of units in the mlp")
     # Checkpointing
-    parser.add_argument("--exp-name", type=str, default='exp_5', help="name of the experiment")
-    parser.add_argument("--save-dir", type=str, default="policys/policy_fix_fix_2_5_aistudio1/",
+    parser.add_argument("--exp-name", type=str, default='exp_23', help="name of the experiment")
+    parser.add_argument("--save-dir", type=str, default="policys/",
                         help="directory in which training state and model should be saved")
     parser.add_argument("--save-rate", type=int, default=100,
                         help="save model once every time this many episodes are completed")
-    parser.add_argument("--load-dir", type=str, default="policys/policy_fix_fix_2_5_aistudio1/",
+    parser.add_argument("--load-dir", type=str, default="policys/exp_19/-113100",
                         help="directory in which training state and model are loaded")
     # Evaluation
-    parser.add_argument("--restore", action="store_true", default=False)
-    parser.add_argument("--display", action="store_true", default=False)
+    parser.add_argument("--restore", action="store_true", default=True)
+    parser.add_argument("--display", action="store_true", default=True)
     parser.add_argument("--benchmark", action="store_true", default=False)
     parser.add_argument("--benchmark-iters", type=int, default=100000, help="number of iterations run for benchmarking")
     parser.add_argument("--benchmark-dir", type=str, default="./benchmark_files/",
@@ -94,7 +98,8 @@ def get_trainers(env, num_adversaries, obs_shape_n, arglist):
 
 
 def train(arglist):
-    with U.single_threaded_session():
+    # with U.single_threaded_session():
+    with U.make_session(8):
         # Create environment
         env = make_env(arglist.scenario, arglist, arglist.benchmark)
         # Create agent trainers
@@ -132,7 +137,8 @@ def train(arglist):
         while True:
             # get action
             action_n = [agent.action(obs) for agent, obs in zip(trainers, obs_n)]
-            # print(action_n)
+            # print('action_n: ',action_n)
+            # print('sum: ',action_n[0])
             # environment step
             new_obs_n, rew_n, done_n, info_n = env.step(action_n)
 
@@ -174,6 +180,33 @@ def train(arglist):
             if arglist.display:
                 time.sleep(0.1)
                 env.render()
+                print('\n*************************Bandwidht assignment*****************************')
+                for i in env.world.bandwidth:
+                    for j in i:
+                        print('%10.2e' % j, end='')
+                    print('\n', end='')
+
+                print('*************************SNR*****************************')
+                for i in env.world.SNR:
+                    for j in i:
+                        print('%10.2f' % j, end='')
+                    print('\n', end='')
+                print('*************************Rate*****************************')
+                for i in env.world.Rate:
+                    for j in i:
+                        print('%10.2e' % j, end='')
+                    print('\n', end='')
+                # print(np.min(env.world.Rate[np.nonzero(env.world.Rate)]))
+                # # plt.figure(figsize=(8, 6))
+                # plt.subplots_adjust(left=.2, right=0.95, bottom=0.15, top=0.95)
+                # # 设置标注前后左右的距离
+                # plt.imshow(env.world.bandwidth, interpolation='nearest')
+                # plt.xlabel('gamma')
+                # plt.ylabel('C')
+                # plt.colorbar()
+                # plt.title('Validation accuracy')
+                # plt.show()
+
                 continue
 
             # update all trainers, if not in display or benchmark mode
@@ -190,20 +223,33 @@ def train(arglist):
                 # save model, display training output
             if terminal and (len(episode_rewards) % arglist.save_rate == 0):
                 # csv格式保存训练过程数据
+
+                plots_dir = arglist.plots_dir + arglist.exp_name
+                if not os.path.exists(plots_dir):
+                    os.mkdir(plots_dir)
+
                 for i, agent in enumerate(trainers):
                     train_traj = pd.DataFrame(loss[i], columns=['q_loss', 'p_loss', 'target_q', 'rew', 'target_q_next',
                                                                 'target_q_std'])
-                    file_name = arglist.plots_dir + arglist.exp_name + '_agent_' + str(i) + '_traj.csv'
-                    # if os.path.exists(file_name):
-                    #     train_traj.to_csv(file_name, mode="a", header=False)
-                    # else:
-                    train_traj.to_csv(file_name, mode='w')
+                    train_traj.to_csv(plots_dir + '/agent_' + str(i) + '_traj.csv', mode='w')
 
+                # # csv格式保存带宽、SNR、Rate等通信效能数据
+                # band_file_name = plots_dir + '/Bandwidth.csv'
+                # SNR_file_name = plots_dir + '/SNR.csv'
+                # Rate_file_name = plots_dir + '/Rate.csv'
+                # band_perform = pd.DataFrame(env.world.bandwidth, index=['UAV1','UAV2','UAV3'], columns=['User1', 'User2', 'User3', 'User4', 'User5','User6', 'User7', 'User8', 'User9', 'User10'])
+                # SNR_perform = pd.DataFrame(env.world.SNR, index=['UAV1','UAV2','UAV3'], columns=['User1', 'User2', 'User3', 'User4', 'User5','User6', 'User7', 'User8', 'User9', 'User10'])
+                # Rate_perform = pd.DataFrame(env.world.Rate, index=['UAV1','UAV2','UAV3'],columns=['User1', 'User2', 'User3', 'User4', 'User5','User6', 'User7', 'User8', 'User9', 'User10'])
+                # band_perform.to_csv(band_file_name, mode="a")
+                # SNR_perform.to_csv(SNR_file_name, mode="a")
+                # Rate_perform.to_csv(Rate_file_name, mode="a")
 
+                # save model
+                model_dir = arglist.save_dir + arglist.exp_name + '/'
                 mean_epi_rew = np.mean(episode_rewards[-arglist.save_rate:])
                 if mean_epi_rew > best_mean_epi_rew:
                     best_mean_epi_rew = mean_epi_rew
-                    U.save_state(arglist.save_dir, saver=saver, global_step=len(episode_rewards))
+                    U.save_state(model_dir, saver=saver, global_step=len(episode_rewards))
 
                 # print statement depends on whether or not there are adversaries
                 if num_adversaries == 0:
@@ -215,7 +261,7 @@ def train(arglist):
                         train_step, len(episode_rewards), np.mean(episode_rewards[-arglist.save_rate:]),
                         [np.mean(rew[-arglist.save_rate:]) for rew in agent_rewards], round(time.time() - t_start, 3)))
 
-                print('*************************Bandwidht assignment*****************************')
+                print('\n*************************Bandwidht assignment*****************************')
                 for i in env.world.bandwidth:
                     for j in i:
                         print('%10.2e' % j, end='')
@@ -224,7 +270,7 @@ def train(arglist):
                 print('*************************SNR*****************************')
                 for i in env.world.SNR:
                     for j in i:
-                        print('%10f' % j, end='')
+                        print('%10.2f' % j, end='')
                     print('\n', end='')
                 print('*************************Rate*****************************')
                 for i in env.world.Rate:
@@ -233,21 +279,7 @@ def train(arglist):
                     print('\n', end='')
 
 
-                # #csv格式保存带宽、SNR、Rate等通信效能数据
-                # band_file_name = arglist.plots_dir + arglist.exp_name + '_Bandwidth.csv'
-                # SNR_file_name = arglist.plots_dir + arglist.exp_name + '_SNR.csv'
-                # Rate_file_name = arglist.plots_dir + arglist.exp_name + '_Rate.csv'
-                # band_perform = pd.DataFrame(env.world.bandwidth, columns=['User1', 'User2', 'User3', 'User4', 'User5'])
-                # SNR_perfodsrm = pd.DataFrame(env.world.SNR, columns=['User1', 'User2', 'User3', 'User4', 'User5'])
-                # Rate_perform = pd.DataFrame(env.world.Rate, columns=['User1', 'User2', 'User3', 'User4', 'User5'])
-                # if os.path.exists(file_name):
-                #     band_perform.to_csv(band_file_name, mode="a", header=False)
-                #     SNR_perform.to_csv(band_file_name, mode="a", header=False)
-                #     Rate_perform.to_csv(band_file_name, mode="a", header=False)
-                # else:
-                #     band_perform.to_csv(band_file_name, mode="w")
-                #     SNR_perform.to_csv(band_file_name, mode="w")
-                #     Rate_perform.to_csv(band_file_name, mode="w")
+
 
                 t_start = time.time()
                 # Keep track of final episode reward
@@ -255,10 +287,10 @@ def train(arglist):
                 for rew in agent_rewards:
                     final_ep_ag_rewards.append(np.mean(rew[-arglist.save_rate:]))
 
-                rew_file_name = arglist.plots_dir + arglist.exp_name + '_rewards.pkl'
+                rew_file_name = plots_dir + '/rewards.pkl'
                 with open(rew_file_name, 'wb') as fp:
                     pickle.dump(final_ep_rewards, fp)
-                agrew_file_name = arglist.plots_dir + arglist.exp_name + '_agrewards.pkl'
+                agrew_file_name = plots_dir + '/agrewards.pkl'
                 with open(agrew_file_name, 'wb') as fp:
                     pickle.dump(final_ep_ag_rewards, fp)
 
